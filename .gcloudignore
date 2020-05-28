@@ -1,0 +1,9 @@
+**/.DS_Store
+**/node_modules
+**/package-lock.json
+.git
+.gitignore
+.npmignore
+.eslintrc.json
+.vscode
+jsconfig.json

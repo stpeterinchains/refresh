@@ -1,0 +1,8 @@
+{ "extends"              : "eslint:recommended",
+  "env"                  : { "node" : true, "es2020" : true },
+  "rules"                :
+    { "strict"           : [ "error", "safe" ],
+      "no-console"       : "off",
+      "no-extra-semi"    : "off",
+      "no-extend-native" : [ "error" ],
+      "no-unused-vars"   : [ "error" ] } }

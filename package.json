@@ -1,0 +1,12 @@
+{ "name"         : "stpeterinchains-refresh",
+  "version"      : "0.1.0",
+  "description"  : "Google Cloud Function to consume tweets from Twitter collections holding event and bulletin data, push to https://github.com/stpeterinchains/stpeterinchains.github.io if updates detected to trigger site regeneration",
+  "license"      : "ISC",
+  "private"      : true,
+  "author"       : "Derek Coulter <sdohtem@gmail.com> (https://github.com/sdohtem)",
+  "repository"   : "github:stpeterinchains/backend",
+  "engine"       : { "node" : "~10.20" },
+  "dependencies" :
+    { "@google-cloud/secret-manager" : "~3.0.0",
+      "@octokit/rest"                : "~17.9",
+      "twitter-lite"                 : "~0.13" } }
