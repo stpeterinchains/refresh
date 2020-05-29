@@ -154,20 +154,15 @@ const
 
       const
         [ ,
-          year,
-          month,
-          day,
+          date,
           title, ] =
-                bulletinDateTitleLine.match(
-                  /^\s*(\d{4})\s*-\s*(\d{2})\s*-\s*(\d{2})\s*(.*?)\s*$/) ||
-                      [ undefined, null, null, null, null ],
-                  // extract date, bulletin title; trim leading/trailing ws
-        date =
-          { year, month, day },
+                bulletinDateTitleLine.match(/^\s*(.*?)\s*-\s*(.*?)\s*$/) ||
+                      [ undefined, null, null ],
+                  // extract date and bulletin title, trim leading/trailing ws
         [ , link ] =
           bulletinLinkLine.match(/^\s*(.*?)\s*$/);  // trim leading/trailing ws
 
-      if (! title)
+      if (! date || ! title)
         return null;
 
       try { new URL(link); }

@@ -4,7 +4,7 @@
   "license"      : "ISC",
   "private"      : true,
   "author"       : "Derek Coulter <sdohtem@gmail.com> (https://github.com/sdohtem)",
-  "repository"   : "github:stpeterinchains/backend",
+  "repository"   : "github:stpeterinchains/refresh",
   "engine"       : { "node" : "~10.20" },
   "dependencies" :
     { "@google-cloud/secret-manager" : "~3.0.0",
