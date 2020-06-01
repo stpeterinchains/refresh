@@ -43,12 +43,12 @@ const
    *
    * @function eventsTransform
    * @param {string} tweetText - Event tweet raw text
-   * @param {(object|null)} lastEvent - Event object of previous tweet
+   * @param {(object|null)} lastNonContinuationEvent - Event object of previous tweet
    * @return {(object|null)} - Event object, or null if invalid tweet
    */
 
   eventsTransform =
-    (tweetText, lastEvent) => {
+    (tweetText, lastNonContinuationEvent) => {
 
       const
         [ firstLine,
@@ -107,18 +107,21 @@ const
             descriptive.push(line);
         }
 
+        const
+          event = { title, color, times, descriptive };
+
         if (title && times.length > 0)
-          return { title, color, times, descriptive }
+          return [ event, event ];
         else
-          return null;
+          return [ null, null ];
       }
 
       else {
 
-        if (lastEvent) {
+        if (lastNonContinuationEvent) {
 
           const
-            { descriptive }  = lastEvent,
+            { descriptive }  = lastNonContinuationEvent,
             descriptiveLines = subsequentLines;
 
           for (const lineRaw of descriptiveLines) {
@@ -130,9 +133,12 @@ const
             if (line)
               descriptive.push(line);
           }
+
+          return [ null, lastNonContinuationEvent ];
         }
 
-        return null;
+        else
+          return [ null, null ];
       }
     },
 
@@ -163,10 +169,10 @@ const
           bulletinLinkLine.match(/^\s*(.*?)\s*$/);  // trim leading/trailing ws
 
       if (! date || ! title)
-        return null;
+        return [ null ];
 
       try { new URL(link); }
-      catch (error) { return null; }
+      catch (error) { return [ null ]; }
 
       const inserts = [];
 
@@ -201,7 +207,10 @@ const
         }
       }
 
-      return { date, title, link, inserts };
+      const
+        bulletin = { date, title, link, inserts };
+
+      return [ bulletin ];
     };
 
 // Define export function
@@ -342,7 +351,9 @@ exports.agent =
                 bulletinsDataset, bulletinsTimelineHash,
                 bulletinsTransform, ], ] ) {
 
-        let lastElement = null;
+        let
+          element                    = null,
+          lastNonContinuationElement = null;
 
         for
           ( const
@@ -369,10 +380,11 @@ exports.agent =
             tweetTextExpandedLinks =
               tweetTextExpandedLinks.replace(linkShortened, linkExpanded);
 
-          const
-            element =
-              lastElement =
-                transform(tweetTextExpandedLinks, lastElement);
+          [ element,
+            lastNonContinuationElement, ] =
+                  transform(
+                    tweetTextExpandedLinks,
+                    lastNonContinuationElement);
 
           if (element)
             dataset.push(element);
