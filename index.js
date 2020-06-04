@@ -8,9 +8,14 @@ const
   { URL }        = require('url');
 
 const
-  { SecretManagerServiceClient } = require('@google-cloud/secret-manager'),
-  { Octokit }                    = require('@octokit/rest'),
-  Twitter                        = require('twitter-lite');
+  { SecretManagerServiceClient }  = require('@google-cloud/secret-manager'),
+  { Octokit }                     = require('@octokit/rest'),
+  Twitter                         = require('twitter-lite');
+
+const
+  { YAMLException,
+    safeLoad        : yamlSafeLoad,
+    FAILSAFE_SCHEMA : yamlFailsafeSchema, } = require('js-yaml');
 
 // Get parameters from environment
 const
@@ -27,9 +32,7 @@ const
     TWITTER_SPECIAL_EVENTS_COLLECTION_COUNT :
             twitterSpecialEventsCollectionCount,
     TWITTER_BULLETINS_COLLECTION_ID         : twitterBulletinsCollectionId,
-    TWITTER_BULLETINS_COLLECTION_COUNT      :
-            twitterBulletinsCollectionCount,
-    TWEET_CONTINUATION                      : tweetContinuationLine,
+    TWITTER_BULLETINS_COLLECTION_COUNT      : twitterBulletinsCollectionCount,
   } = process.env;
 
 // Define support functions
@@ -37,108 +40,95 @@ const
 
   /**
    * Transforms a raw regular/special event tweet into an event object.
-   * Handles continuation tweets (first line "..."), which append their
-   * subsequent lines as descriptive lines to the event object of the
-   * previous tweet.
+   * Handles continuation tweets (title not present), which append their
+   * descriptive text to that of the last non-continuation tweet.
    *
    * @function eventsTransform
-   * @param {string} tweetText - Event tweet raw text
-   * @param {(object|null)} lastNonContinuationEvent - Event object of previous tweet
-   * @return {(object|null)} - Event object, or null if invalid tweet
+   * @param {string} tweetId - Event tweet status id.
+   * @param {string} tweetText - Event tweet raw text.
+   * @param {(object|null)} lastNonContinuationEvent - Last primary event object.
+   * @return {object[3]} - Transform result: Event object, last event object, error descriptor.
    */
 
   eventsTransform =
-    (tweetText, lastNonContinuationEvent) => {
+    (tweetId, tweetText, lastNonContinuationEvent) => {
 
-      const
-        [ firstLine,
-          ...subsequentLines ] = tweetText.split('\n');
-
-      if (firstLine !== tweetContinuationLine) {
+      try {
 
         const
-          titleLine               = firstLine,
-          [ timesLine,
-            ...descriptiveLines ] = subsequentLines;
+          eventDocument = yamlSafeLoad(
+            tweetText,
+            { schema : yamlFailsafeSchema });
 
         const
-          [ , title ] =
-            titleLine.
-                  replace(/\+\w+/g, '').
-                  match(/^\s*(.*?)\s*$/),
-              // strip color directives, trim leading/trailing ws
-          [ , color ] =
-            titleLine.match(/\+(\w+)/) ||
-                  [ undefined, null ];
-              // extract first available color directive
+          { ti : title,        // undefined if continuation tweet
+            su : subtitle,     // optional
+            co : color,        // optional
+            ts : times = [],   // optional
+            de : descriptive,  // optional, required if continuation tweet
+          } = eventDocument;
 
         const
-          times        = [],
-          timeSegments =
-            timesLine ?
-                  timesLine.split(';') :
-                  [];
+          continuation = ! title && descriptive;
 
-        for (const timeSegment of timeSegments) {
+        if (! continuation) {
+
+          if (! title)
+            throw new TypeError('Title missing or invalid');
+
+          for (const { da : day, tm : time } of times)
+            if (! day || ! time)
+              throw new TypeError('Day/date or time missing or invalid');
 
           const
-            [ ,
-              day,
-              time,
-              location = null, ] =
-                    timeSegment.match(
-                      /^\s*(.*?)\s*@\s*(.*?)(?:\s*\(\s*(.*?)\s*\).*?)?\s*$/) ||
-                          [ undefined, null, null, null ];
-                      // extract day, time, location
+            event = { title, subtitle, color, times, descriptive };
 
-          if (day && time)
-            times.push({ day, time, location });
+          return [ event, event, null ];
         }
 
-        const descriptive = [];
+        else {
 
-        for (const rawLine of descriptiveLines) {
+          if (lastNonContinuationEvent) {
 
-          const
-            [ , line ] = rawLine.match(/^\s*(.*?)\s*$/);
-              // trim leading/trailing ws
+            lastNonContinuationEvent.descriptive +=
+              '\n\n' + descriptive;
 
-          if (line)
-            descriptive.push(line);
-        }
-
-        const
-          event = { title, color, times, descriptive };
-
-        if (title && times.length > 0)
-          return [ event, event ];
-        else
-          return [ null, null ];
-      }
-
-      else {
-
-        if (lastNonContinuationEvent) {
-
-          const
-            { descriptive }  = lastNonContinuationEvent,
-            descriptiveLines = subsequentLines;
-
-          for (const lineRaw of descriptiveLines) {
-
-            const
-              [ , line ] = lineRaw.match(/^\s*(.*?)\s*$/);
-                // trim leading/trailing ws
-
-            if (line)
-              descriptive.push(line);
+            return [ null, lastNonContinuationEvent, null ];
           }
 
-          return [ null, lastNonContinuationEvent ];
+          else
+            throw new Error('Continuation tweet with no primary');
         }
+      }
+
+      catch (error) {
+
+        let descriptor;
+
+        if (error instanceof YAMLException)
+          descriptor =
+            { error  : 'Invalid YAML',
+              type   : error.name,
+              reason : error.reason,
+              mark   : error.mark, };
+
+        else if (error instanceof TypeError)
+          descriptor =
+            { error  : 'Invalid structure',
+              type   : error.name,
+              reason : error.message, };
 
         else
-          return [ null, null ];
+          descriptor =
+            { error  : 'Unexpected error',
+              type   : error.name,
+              reason : error.message, };
+
+        descriptor.tweetId = tweetId;
+
+        console.error(descriptor);
+
+        return [ null, null, descriptor ];
       }
     },
 
@@ -146,71 +136,79 @@ const
    * Transforms a raw bulletin tweet into a bulletin object.
    *
    * @function bulletinsTransform
-   * @param {stromg} tweetText - Bulletin tweet raw text
-   * @return {(object|null)} - Bulletin object, or null if invalid tweet
+   * @param {string} tweetId - Bulletin tweet status id.
+   * @param {string} tweetText - Bulletin tweet raw text.
+   * @return {object[3]} - Transform result: Bulletin object, last bulletin object (always null), error descriptor.
    */
 
   bulletinsTransform =
-    tweetText => {
+    (tweetId, tweetText) => {
 
-      const
-        [ bulletinDateTitleLine,
-          bulletinLinkLine,
-          ...subsequentLines ] = tweetText.split('\n');
-
-      const
-        [ ,
-          date,
-          title, ] =
-                bulletinDateTitleLine.match(/^\s*(.*?)\s*-\s*(.*?)\s*$/) ||
-                      [ undefined, null, null ],
-                  // extract date and bulletin title, trim leading/trailing ws
-        [ , link ] =
-          bulletinLinkLine.match(/^\s*(.*?)\s*$/);  // trim leading/trailing ws
-
-      if (! date || ! title)
-        return [ null ];
-
-      try { new URL(link); }
-      catch (error) { return [ null ]; }
-
-      const inserts = [];
-
-      let
-        insertTitle,
-        insertLink,
-        expectingInsertTitleLine = true;
-
-      for (const rawLine of subsequentLines) {
+      try {
 
         const
-          [ , trimmedLine ] = rawLine.match(/^\s*(.*?)\s*$/);
-            // trim leading/trailing ws
+          bulletinDocument = yamlSafeLoad(
+            tweetText,
+            { schema : yamlFailsafeSchema });
 
-        if (trimmedLine) {
+        const
+          { da : date,
+            ti : title,
+            su : subtitle,      // optional
+            li : link,
+            in : inserts = [],  // optional
+          } = bulletinDocument;
 
-          if (expectingInsertTitleLine) {
+        if (! date || ! title || ! link)
+          throw new TypeError(
+            'Bulletin date, title, or link missing or invalid');
 
-            insertTitle              = trimmedLine;
-            expectingInsertTitleLine = false;
-          }
+        for (const { ti : title, li : link } of inserts) {
 
-          else {
+          if (! title )
+            throw new TypeError('Insert title missing or invalid');
 
-            insertLink               = trimmedLine;
-            expectingInsertTitleLine = true;
-
-            inserts.push(
-              { title : insertTitle,
-                link  : insertLink, });
+          try { new URL(link); }
+          catch (error) {
+            throw new TypeError('Insert link missing or invalid');
           }
         }
+
+        const
+          bulletin = { date, title, subtitle, link, inserts };
+
+        return [ bulletin, null, null ];
       }
 
-      const
-        bulletin = { date, title, link, inserts };
+      catch (error) {
 
-      return [ bulletin ];
+        let descriptor;
+
+        if (error instanceof YAMLException)
+          descriptor =
+            { error  : 'Invalid YAML',
+              type   : error.name,
+              reason : error.reason,
+              mark   : error.mark, };
+
+        else if (error instanceof TypeError)
+          descriptor =
+            { error  : 'Invalid structure',
+              type   : error.name,
+              reason : error.message, };
+
+        else
+          descriptor =
+            { error  : 'Unexpected error',
+              type   : error.name,
+              reason : error.message, };
+
+        descriptor.tweetId = tweetId;
+
+        console.error(descriptor);
+
+        return [ null, null, descriptor ];
+      }
     };
 
 // Define export function
@@ -333,27 +331,33 @@ exports.agent =
         regularEventsDataset      = [],
         specialEventsDataset      = [],
         bulletinsDataset          = [],
+        regularEventsErrors       = [],
+        specialEventsErrors       = [],
+        bulletinsErrors           = [],
         regularEventsTimelineHash = createHash('md5'),
         specialEventsTimelineHash = createHash('md5'),
         bulletinsTimelineHash     = createHash('md5');
 
       for
         ( const
-            [ timeline = [], tweets = {}, dataset, hash, transform ]
+            [ timeline = [], tweets = {},
+              dataset, errors,
+              hash, transform, ]
           of
             [ [ regularEventsTimeline, regularEventsTweets,
-                regularEventsDataset, regularEventsTimelineHash,
-                eventsTransform, ],
+                regularEventsDataset, regularEventsErrors,
+                regularEventsTimelineHash, eventsTransform, ],
               [ specialEventsTimeline, specialEventsTweets,
-                specialEventsDataset, specialEventsTimelineHash,
-                eventsTransform, ],
+                specialEventsDataset, specialEventsErrors,
+                specialEventsTimelineHash, eventsTransform, ],
               [ bulletinsTimeline, bulletinsTweets,
-                bulletinsDataset, bulletinsTimelineHash,
-                bulletinsTransform, ], ] ) {
+                bulletinsDataset, bulletinsErrors,
+                bulletinsTimelineHash, bulletinsTransform, ], ] ) {
 
         let
           element                    = null,
-          lastNonContinuationElement = null;
+          lastNonContinuationElement = null,
+          errorDescriptor            = null;
 
         for
           ( const
@@ -381,13 +385,18 @@ exports.agent =
               tweetTextExpandedLinks.replace(linkShortened, linkExpanded);
 
           [ element,
-            lastNonContinuationElement, ] =
+            lastNonContinuationElement,
+            errorDescriptor, ] =
                   transform(
+                    tweetId,
                     tweetTextExpandedLinks,
                     lastNonContinuationElement);
 
           if (element)
             dataset.push(element);
+
+          if (errorDescriptor)
+            errors.push(errorDescriptor);
 
           hash.update(tweetText);
         }
@@ -411,8 +420,7 @@ exports.agent =
         bulletinsCollectionUpdated =
           bulletinsTimelineDigest !== bulletinsTimelineComputedDigest,
         collectionsUpdated =
-          regularEventsCollectionUpdated ||
-                specialEventsCollectionUpdated ||
+          regularEventsCollectionUpdated || specialEventsCollectionUpdated ||
                 bulletinsCollectionUpdated;
 
       if (collectionsUpdated) {
@@ -434,7 +442,10 @@ exports.agent =
               digests       :
                 [ regularEventsTimelineComputedDigest,
                   specialEventsTimelineComputedDigest,
-                  bulletinsTimelineComputedDigest, ], },
+                  bulletinsTimelineComputedDigest, ],
+              regularEventsErrors,
+              specialEventsErrors,
+              bulletinsErrors, },
           computedGeneratedContentJson =
             JSON.stringify(computedGeneratedContent),
           computedGeneratedContentJsonBase64 =
