@@ -61,11 +61,12 @@ const
             { schema : yamlFailsafeSchema });
 
         const
-          { ti : title,        // undefined if continuation tweet
-            su : subtitle,     // optional
-            co : color,        // optional
-            ts : times = [],   // optional
-            de : descriptive,  // optional, required if continuation tweet
+          { ti : title,          // undefined if continuation tweet
+            su : subtitle,       // optional
+            co : color,          // optional
+            lo : location,       // optional
+            ts : timesRaw = [],  // optional
+            de : descriptive,    // optional, required if continuation tweet
           } = eventDocument;
 
         const
@@ -76,12 +77,16 @@ const
           if (! title)
             throw new TypeError('Title missing or invalid');
 
-          for (const { da : day, tm : time } of times)
-            if (! day || ! time)
+          const times = [];
+
+          for (const { da : day, tm : time } of timesRaw)
+            if (day && time)
+              times.push({ day, time });
+            else
               throw new TypeError('Day/date or time missing or invalid');
 
           const
-            event = { title, subtitle, color, times, descriptive };
+            event = { title, subtitle, color, location, times, descriptive };
 
           return [ event, event, null ];
         }
