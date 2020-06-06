@@ -61,12 +61,12 @@ const
             { schema : yamlFailsafeSchema });
 
         const
-          { ti : title,          // undefined if continuation tweet
-            su : subtitle,       // optional
-            co : color,          // optional
-            lo : location,       // optional
-            ts : timesRaw = [],  // optional
-            de : descriptive,    // optional, required if continuation tweet
+          { title,                     // undefined if continuation tweet
+            sub   : subtitle,          // optional
+            color,                     // optional
+            loc   : location,          // optional
+            times : timesRaw    = [],  // optional
+            desc  : descriptive = '',  // optional, reqd if continuation tweet
           } = eventDocument;
 
         const
@@ -79,7 +79,7 @@ const
 
           const times = [];
 
-          for (const { da : day, tm : time } of timesRaw)
+          for (const { day, time } of timesRaw)
             if (day && time)
               times.push({ day, time });
             else
@@ -157,18 +157,20 @@ const
             { schema : yamlFailsafeSchema });
 
         const
-          { da : date,
-            ti : title,
-            su : subtitle,      // optional
-            li : link,
-            in : inserts = [],  // optional
+          { date,
+            title,
+            sub     : subtitle,         // optional
+            link,
+            inserts : insertsRaw = [],  // optional
           } = bulletinDocument;
 
         if (! date || ! title || ! link)
           throw new TypeError(
             'Bulletin date, title, or link missing or invalid');
 
-        for (const { ti : title, li : link } of inserts) {
+        const inserts = [];
+
+        for (const { title, link } of insertsRaw) {
 
           if (! title )
             throw new TypeError('Insert title missing or invalid');
@@ -177,6 +179,8 @@ const
           catch (error) {
             throw new TypeError('Insert link missing or invalid');
           }
+
+          inserts.push({ title, link });
         }
 
         const
