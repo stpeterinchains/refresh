@@ -61,29 +61,26 @@ const
             { schema : yamlFailsafeSchema });
 
         const
-          { title,                     // undefined if continuation tweet
-            sub   : subtitle,          // optional
-            color,                     // optional
-            loc   : location,          // optional
-            times : timesRaw    = [],  // optional
-            desc  : descriptive = '',  // optional, reqd if continuation tweet
+          { title,                       // undefined if continuation tweet
+            sub  : subtitle,             // optional
+            color,                       // optional
+            loc  : location,             // optional
+            times                 = [],  // optional
+            desc : descriptiveRaw = '',  // optional, required if contn tweet
           } = eventDocument;
 
         const
+          descriptive  = descriptiveRaw.trim(),
           continuation = ! title && descriptive;
 
         if (! continuation) {
 
           if (! title)
-            throw new TypeError('Title missing or invalid');
+            throw new TypeError('Title missing');
 
-          const times = [];
-
-          for (const { day, time } of timesRaw)
-            if (day && time)
-              times.push({ day, time });
-            else
-              throw new TypeError('Day/date or time missing or invalid');
+          for (const { day, time } of times)
+            if (! day || ! time)
+              throw new TypeError('Day/date or time missing');
 
           const
             event = { title, subtitle, color, location, times, descriptive };
@@ -95,8 +92,15 @@ const
 
           if (lastNonContinuationEvent) {
 
+            const
+              separator =
+                descriptive ?
+                      '\n\n' :
+                      '';
+
             lastNonContinuationEvent.descriptive +=
-              '\n\n' + descriptive;
+              separator +
+                    descriptive;
 
             return [ null, lastNonContinuationEvent, null ];
           }
@@ -159,28 +163,29 @@ const
         const
           { date,
             title,
-            sub     : subtitle,         // optional
+            sub : subtitle,  // optional
             link,
-            inserts : insertsRaw = [],  // optional
+            inserts = [],    // optional
           } = bulletinDocument;
 
-        if (! date || ! title || ! link)
+        if (! date || ! title)
           throw new TypeError(
-            'Bulletin date, title, or link missing or invalid');
+            'Bulletin date or title missing');
 
-        const inserts = [];
+        try { new URL(link); }
+        catch (error) {
+          throw new TypeError('Bulletin link missing or invalid');
+        }
 
-        for (const { title, link } of insertsRaw) {
+        for (const { title, link } of inserts) {
 
           if (! title )
-            throw new TypeError('Insert title missing or invalid');
+            throw new TypeError('Insert title missing');
 
           try { new URL(link); }
           catch (error) {
             throw new TypeError('Insert link missing or invalid');
           }
-
-          inserts.push({ title, link });
         }
 
         const
