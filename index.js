@@ -25,6 +25,9 @@ const
     GITHUB_REPO                             : githubRepository,
     GITHUB_GENERATED_CONTENT_PATH           : githubGeneratedContentPath,
     TWITTER_SECRET                          : twitterSecret,
+    TWITTER_ANNOUNCEMENTS_COLLECTION_ID     : twitterAnnouncementsCollectionId,
+    TWITTER_ANNOUNCEMENTS_COLLECTION_COUNT  :
+            twitterAnnouncementsCollectionCount,
     TWITTER_REGULAR_EVENTS_COLLECTION_ID    : twitterRegularEventsCollectionId,
     TWITTER_REGULAR_EVENTS_COLLECTION_COUNT :
             twitterRegularEventsCollectionCount,
@@ -35,18 +38,76 @@ const
     TWITTER_BULLETINS_COLLECTION_COUNT      : twitterBulletinsCollectionCount,
   } = process.env;
 
-// Define support functions
+// Define tweet transform and support functions
 const
 
   /**
-   * Transforms a raw regular/special event tweet into an event object.
+   * Transforms an announcement tweet into an announcement object.
+   * Handles continuation tweets (title not present), which append their
+   * descriptive text to that of the last non-continuation tweet.
+   *
+   * @function announcementsTransform
+   * @param {string} tweetId - Announcement tweet status id.
+   * @param {string} tweetText - Announcement tweet raw text.
+   * @param {(object|null)} lastNonContinuationAnnouncement - Last announcement object.
+   * @return {object[3]} - Transform result: Announcement object, last announcement object, error descriptor.
+   */
+
+  announcementsTransform =
+    (tweetId, tweetText, lastNonContinuationAnnouncement) => {
+
+      try {
+
+        const
+          announcementDocument =
+            yamlSafeLoad(
+              tweetText,
+              { schema : yamlFailsafeSchema });
+
+        const
+          { title,                       // undefined if continuation tweet
+            sub  : subtitle,             // optional
+            date,                        // optional
+            color,                       // optional
+            desc : descriptiveRaw = '',  // optional, required if contn tweet
+          } = announcementDocument;
+
+        const
+          descriptive  = descriptiveRaw.trim(),
+          continuation = ! title && descriptive;
+
+        if (! continuation) {
+
+          if (! title)
+            throw new TypeError('Title missing');
+
+          const
+            announcement = { title, subtitle, date, color, descriptive };
+
+          return [ announcement, announcement, null ];
+        }
+
+        else
+          return handleContinuation(
+            lastNonContinuationAnnouncement,
+            descriptive);
+      }
+
+      catch (error) {
+
+        return prepare(error, tweetId);
+      }
+    },
+
+  /**
+   * Transforms a regular or special event tweet into an event object.
    * Handles continuation tweets (title not present), which append their
    * descriptive text to that of the last non-continuation tweet.
    *
    * @function eventsTransform
    * @param {string} tweetId - Event tweet status id.
    * @param {string} tweetText - Event tweet raw text.
-   * @param {(object|null)} lastNonContinuationEvent - Last primary event object.
+   * @param {(object|null)} lastNonContinuationEvent - Last event object.
    * @return {object[3]} - Transform result: Event object, last event object, error descriptor.
    */
 
@@ -56,9 +117,10 @@ const
       try {
 
         const
-          eventDocument = yamlSafeLoad(
-            tweetText,
-            { schema : yamlFailsafeSchema });
+          eventDocument =
+            yamlSafeLoad(
+              tweetText,
+              { schema : yamlFailsafeSchema });
 
         const
           { title,                       // undefined if continuation tweet
@@ -88,61 +150,21 @@ const
           return [ event, event, null ];
         }
 
-        else {
-
-          if (lastNonContinuationEvent) {
-
-            const
-              separator =
-                descriptive ?
-                      '\n\n' :
-                      '';
-
-            lastNonContinuationEvent.descriptive +=
-              separator +
-                    descriptive;
-
-            return [ null, lastNonContinuationEvent, null ];
-          }
-
-          else
-            throw new Error('Continuation tweet with no primary');
-        }
+        else
+          return handleContinuation(
+            lastNonContinuationEvent,
+            descriptive);
       }
 
       catch (error) {
 
-        let descriptor;
-
-        if (error instanceof YAMLException)
-          descriptor =
-            { error  : 'Invalid YAML',
-              type   : error.name,
-              reason : error.reason,
-              mark   : error.mark, };
-
-        else if (error instanceof TypeError)
-          descriptor =
-            { error  : 'Invalid structure',
-              type   : error.name,
-              reason : error.message, };
-
-        else
-          descriptor =
-            { error  : 'Unexpected error',
-              type   : error.name,
-              reason : error.message, };
-
-        descriptor.tweetId = tweetId;
-
-        console.error(descriptor);
-
-        return [ null, null, descriptor ];
+        return prepare(error, tweetId);
       }
     },
 
   /**
-   * Transforms a raw bulletin tweet into a bulletin object.
+   * Transforms a bulletin tweet into a bulletin object.
+   * Note: Unlike annoucements and events, bulletins have no continuations.
    *
    * @function bulletinsTransform
    * @param {string} tweetId - Bulletin tweet status id.
@@ -156,9 +178,10 @@ const
       try {
 
         const
-          bulletinDocument = yamlSafeLoad(
-            tweetText,
-            { schema : yamlFailsafeSchema });
+          bulletinDocument =
+            yamlSafeLoad(
+              tweetText,
+              { schema : yamlFailsafeSchema });
 
         const
           { date,
@@ -196,55 +219,119 @@ const
 
       catch (error) {
 
-        let descriptor;
-
-        if (error instanceof YAMLException)
-          descriptor =
-            { error  : 'Invalid YAML',
-              type   : error.name,
-              reason : error.reason,
-              mark   : error.mark, };
-
-        else if (error instanceof TypeError)
-          descriptor =
-            { error  : 'Invalid structure',
-              type   : error.name,
-              reason : error.message, };
-
-        else
-          descriptor =
-            { error  : 'Unexpected error',
-              type   : error.name,
-              reason : error.message, };
-
-        descriptor.tweetId = tweetId;
-
-        console.error(descriptor);
-
-        return [ null, null, descriptor ];
+        return prepare(error);
       }
+    },
+
+  /**
+   * Handles a continuation tweet.
+   *
+   * @function handleContinuation
+   * @param {object} lastNonContinuation - Last element object.
+   * @param {string} descriptive - Trimmed descriptive text from continuation tweet.
+   * @return {object[3]} - Transform result: Element object (always null), last element object, error descriptor (always null).
+   */
+
+  handleContinuation =
+    (lastNonContinuation, descriptive) => {
+
+      if (lastNonContinuation) {
+
+        const separator =
+          descriptive ?
+                '\n\n' :
+                '';
+
+        lastNonContinuation.descriptive +=
+          separator +
+                descriptive;
+
+        return [ null, lastNonContinuation, null ];
+      }
+
+      else
+        throw new Error('Continuation tweet with no primary');
+    },
+
+  /**
+   * Prepares a transform's error result.
+   *
+   * @function
+   * @param {(YAMLException|TypeError|Error)} error - Error object caught in transform.
+   * @return {object[3]} - Transform result: Element object (always null), last element object (always null), error descriptor.
+   */
+
+  prepare =
+    (error, tweetId) => {
+
+      let descriptor;
+
+      if (error instanceof YAMLException)
+        descriptor =
+          { error  : 'Invalid YAML',
+            type   : error.name,
+            reason : error.reason,
+            mark   : error.mark, };
+
+      else if (error instanceof TypeError)
+        descriptor =
+          { error  : 'Invalid structure',
+            type   : error.name,
+            reason : error.message, };
+
+      else
+        descriptor =
+          { error  : 'Unexpected error',
+            type   : error.name,
+            reason : error.message, };
+
+      descriptor.tweetId = tweetId;
+
+      console.error(descriptor);
+
+      return [ null, null, descriptor ];
     };
 
-// Define export function
+// Define module export function
 
 /**
- * Google Cloud Function which reads tweets from each of three Twitter
- * collections containing tweets describing the regular events, special events,
- * and bulletins to be displayed by the accompanying website. The function
- * extracts the content of the tweets into objects and commits a single JSON
- * file containing the resulting datasets to Github to trigger website
- * regeneration.
+ * Google Cloud Function which reads tweets from each of four Twitter
+ * collections containing small YAML documents describing announcements,
+ * regular events, special events, and bulletins to be displayed by the
+ * accompanying website. Tweet contents are transformed into objects and
+ * committed to the website's GitHub repo as a single JSON file. The
+ * website is a Jekyll site hosted on GitHub Pages; the commit automatically
+ * triggers the Jekyll build process to refresh the site with the new data.
  *
  * @async
  * @function agent
- * @param {object} event - GCP PubsubMessage object. Ignored.
+ * @param {object} message - GCP PubsubMessage object.
  * @param {object} context - GCP Function context object. Ignored.
  * @see {@link https://cloud.google.com/functions/docs/writing/background}
  * @see {@link https://cloud.google.com/functions/docs/calling/pubsub}
  */
 
 exports.agent =
-  async () => {
+  async message => {
+
+    // Define invokation option
+    let
+      dryRun = false;
+
+    try {
+
+      const
+        { attributes   :
+            { dryRun : dryRunOption = false }, } = message;
+
+      dryRun =
+        !! JSON.parse(dryRunOption);
+    }
+
+    catch (error) {
+
+      // keep default options
+    }
 
     try {
 
@@ -293,7 +380,9 @@ exports.agent =
         twitterCollectionsEntriesEndpoint = 'collections/entries';
 
       const
-        [ { response : { timeline : regularEventsTimeline },
+        [ { response : { timeline : announcementsTimeline },
+            objects  : { tweets   : announcementsTweets }, },
+          { response : { timeline : regularEventsTimeline },
             objects  : { tweets   : regularEventsTweets }, },
           { response : { timeline : specialEventsTimeline },
             objects  : { tweets   : specialEventsTweets }, },
@@ -306,21 +395,27 @@ exports.agent =
                   [ twitter.get(
                       twitterCollectionsEntriesEndpoint,
                       { id         :
+                          `custom-${twitterAnnouncementsCollectionId}`,
+                        count      : +twitterAnnouncementsCollectionCount,
+                        tweet_mode : 'extended', }),
+                    twitter.get(
+                      twitterCollectionsEntriesEndpoint,
+                      { id         :
                           `custom-${twitterRegularEventsCollectionId}`,
-                        count      : twitterRegularEventsCollectionCount,
+                        count      : +twitterRegularEventsCollectionCount,
                         tweet_mode : 'extended', }),
                     twitter.get(
                       twitterCollectionsEntriesEndpoint,
                       { id         :
                           `custom-${twitterSpecialEventsCollectionId}`,
-                        count      : twitterSpecialEventsCollectionCount,
+                        count      : +twitterSpecialEventsCollectionCount,
                         tweet_mode : 'extended', }),
                     twitter.get(
                       twitterCollectionsEntriesEndpoint,
                       { id         : `custom-${twitterBulletinsCollectionId}`,
-                        count      : twitterBulletinsCollectionCount,
+                        count      : +twitterBulletinsCollectionCount,
                         tweet_mode : 'extended', }),
-                    github.repos.getContents(
+                    github.repos.getContent(
                       { owner : githubOwner,
                         repo  : githubRepository,
                         path  : githubGeneratedContentPath, }), ]);
@@ -335,19 +430,23 @@ exports.agent =
         generatedContent =
           JSON.parse(generatedContentJson),
         { digests :
-            [ regularEventsTimelineDigest,
+            [ announcementsTimelineDigest,
+              regularEventsTimelineDigest,
               specialEventsTimelineDigest,
               bulletinsTimelineDigest, ], } = generatedContent;
 
       // Generate datasets for regular/special events and bulletins
       // Compute hashes to detect collection updates
       const
+        announcementsDataset      = [],
         regularEventsDataset      = [],
         specialEventsDataset      = [],
         bulletinsDataset          = [],
+        announcementsErrors       = [],
         regularEventsErrors       = [],
         specialEventsErrors       = [],
         bulletinsErrors           = [],
+        announcementsTimelineHash = createHash('md5'),
         regularEventsTimelineHash = createHash('md5'),
         specialEventsTimelineHash = createHash('md5'),
         bulletinsTimelineHash     = createHash('md5');
@@ -355,18 +454,21 @@ exports.agent =
       for
         ( const
             [ timeline = [], tweets = {},
-              dataset, errors,
-              hash, transform, ]
+              dataset,       errors,
+              hash,          transform, ]
           of
-            [ [ regularEventsTimeline, regularEventsTweets,
-                regularEventsDataset, regularEventsErrors,
+            [ [ announcementsTimeline,     announcementsTweets,
+                announcementsDataset,      announcementsErrors,
+                announcementsTimelineHash, announcementsTransform, ],
+              [ regularEventsTimeline,     regularEventsTweets,
+                regularEventsDataset,      regularEventsErrors,
                 regularEventsTimelineHash, eventsTransform, ],
-              [ specialEventsTimeline, specialEventsTweets,
-                specialEventsDataset, specialEventsErrors,
+              [ specialEventsTimeline,     specialEventsTweets,
+                specialEventsDataset,      specialEventsErrors,
                 specialEventsTimelineHash, eventsTransform, ],
-              [ bulletinsTimeline, bulletinsTweets,
-                bulletinsDataset, bulletinsErrors,
-                bulletinsTimelineHash, bulletinsTransform, ], ] ) {
+              [ bulletinsTimeline,         bulletinsTweets,
+                bulletinsDataset,          bulletinsErrors,
+                bulletinsTimelineHash,     bulletinsTransform, ], ] ) {
 
         let
           element                    = null,
@@ -417,16 +519,20 @@ exports.agent =
       }
 
       const
-        [ regularEventsTimelineComputedDigest,
+        [ announcementsTimelineComputedDigest,
+          regularEventsTimelineComputedDigest,
           specialEventsTimelineComputedDigest,
           bulletinsTimelineComputedDigest, ] =
-                [ regularEventsTimelineHash.digest('hex'),
+                [ announcementsTimelineHash.digest('hex'),
+                  regularEventsTimelineHash.digest('hex'),
                   specialEventsTimelineHash.digest('hex'),
                   bulletinsTimelineHash.digest('hex'), ];
 
       // If at least one collection has updates, push datasets and digests
       // to GitHub to trigger site regeneration
       const
+        announcementsCollectionUpdated =
+          announcementsTimelineDigest !== announcementsTimelineComputedDigest,
         regularEventsCollectionUpdated =
           regularEventsTimelineDigest !== regularEventsTimelineComputedDigest,
         specialEventsCollectionUpdated =
@@ -434,13 +540,17 @@ exports.agent =
         bulletinsCollectionUpdated =
           bulletinsTimelineDigest !== bulletinsTimelineComputedDigest,
         collectionsUpdated =
-          regularEventsCollectionUpdated || specialEventsCollectionUpdated ||
+          announcementsCollectionUpdated ||
+                regularEventsCollectionUpdated ||
+                specialEventsCollectionUpdated ||
                 bulletinsCollectionUpdated;
 
       if (collectionsUpdated) {
 
         const updatedCollections = [];
 
+        if (announcementsCollectionUpdated)
+          updatedCollections.push('announcements');
         if (regularEventsCollectionUpdated)
           updatedCollections.push('regular events');
         if (specialEventsCollectionUpdated)
@@ -450,13 +560,16 @@ exports.agent =
 
         const
           computedGeneratedContent =
-            { regularEvents : regularEventsDataset,
+            { announcements : announcementsDataset,
+              regularEvents : regularEventsDataset,
               specialEvents : specialEventsDataset,
               bulletins     : bulletinsDataset,
               digests       :
-                [ regularEventsTimelineComputedDigest,
+                [ announcementsTimelineComputedDigest,
+                  regularEventsTimelineComputedDigest,
                   specialEventsTimelineComputedDigest,
                   bulletinsTimelineComputedDigest, ],
+              announcementsErrors,
               regularEventsErrors,
               specialEventsErrors,
               bulletinsErrors, },
@@ -467,30 +580,36 @@ exports.agent =
                   from(computedGeneratedContentJson).
                   toString('base64');
 
-        const
-          updatedCollectionsList =
-            updatedCollections.join(', '),
-          githubCommitMessage =
-            'Generated content data: Updates in ' +
-                  updatedCollectionsList;
+        if (! dryRun) {
 
-        const
-          { data : { commit : { sha : githubCommitSha1 } } } =
-                  await github.repos.createOrUpdateFile(
-                    { owner   : githubOwner,
-                      repo    : githubRepository,
-                      path    : githubGeneratedContentPath,
-                      message : githubCommitMessage,
-                      content : computedGeneratedContentJsonBase64,
-                      sha     : generatedContentSha1, });
+          const
+            updatedCollectionsList =
+              updatedCollections.join(', '),
+            githubCommitMessage =
+              'Generated content data: Updates in ' +
+                    updatedCollectionsList;
 
-        console.log(
-          `Commit ${githubCommitSha1.slice(0, 7)} - Updates in ` +
-                updatedCollectionsList);
+          const
+            { data : { commit : { sha : githubCommitSha1 } } } =
+                    await github.repos.createOrUpdateFileContents(
+                      { owner   : githubOwner,
+                        repo    : githubRepository,
+                        path    : githubGeneratedContentPath,
+                        message : githubCommitMessage,
+                        content : computedGeneratedContentJsonBase64,
+                        sha     : generatedContentSha1, });
+
+          console.info(
+            `Commit ${githubCommitSha1.slice(0, 7)} - Updates in ` +
+                  updatedCollectionsList);
+        }
+
+        else
+          console.info(computedGeneratedContentJson);
       }
 
       else
-        console.log('No collection updates');
+        console.info('No collection updates');
     }
 
     catch (error) {
