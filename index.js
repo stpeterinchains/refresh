@@ -67,7 +67,6 @@ const
         const
           { title,                       // undefined if continuation tweet
             sub  : subtitle,             // optional
-            date,                        // optional
             color,                       // optional
             desc : descriptiveRaw = '',  // optional, required if contn tweet
           } = announcementDocument;
@@ -82,7 +81,7 @@ const
             throw new TypeError('Title missing');
 
           const
-            announcement = { title, subtitle, date, color, descriptive };
+            announcement = { title, subtitle, color, descriptive };
 
           return [ announcement, announcement, null ];
         }
