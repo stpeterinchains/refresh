@@ -603,8 +603,10 @@ exports.agent =
                   videosTimelineHash.digest('hex'),
                   bulletinsTimelineHash.digest('hex'), ];
 
-      // If at least one collection has updates, push datasets and digests
-      // to GitHub to trigger site regeneration
+      // If dry run, just log generated data; otherwise, if changes detected in
+      // at least one collection, push generated data to GitHub to trigger
+      // site regeneration
+
       const
         announcementsCollectionUpdated =
           announcementsTimelineDigest !== announcementsTimelineComputedDigest,
@@ -623,21 +625,7 @@ exports.agent =
                 videosCollectionUpdated ||
                 bulletinsCollectionUpdated;
 
-      if (collectionsUpdated) {
-
-        const
-          updatedCollections = [];
-
-        if (announcementsCollectionUpdated)
-          updatedCollections.push('announcements');
-        if (regularEventsCollectionUpdated)
-          updatedCollections.push('regular events');
-        if (specialEventsCollectionUpdated)
-          updatedCollections.push('special events');
-        if (videosCollectionUpdated)
-          updatedCollections.push('videos');
-        if (bulletinsCollectionUpdated)
-          updatedCollections.push('bulletins');
+      if (collectionsUpdated || dryRun) {
 
         const
           computedGeneratedContent =
@@ -665,6 +653,20 @@ exports.agent =
                   toString('base64');
 
         if (! dryRun) {
+
+          const
+            updatedCollections = [];
+
+          if (announcementsCollectionUpdated)
+            updatedCollections.push('announcements');
+          if (regularEventsCollectionUpdated)
+            updatedCollections.push('regular events');
+          if (specialEventsCollectionUpdated)
+            updatedCollections.push('special events');
+          if (videosCollectionUpdated)
+            updatedCollections.push('videos');
+          if (bulletinsCollectionUpdated)
+            updatedCollections.push('bulletins');
 
           const
             updatedCollectionsList =
