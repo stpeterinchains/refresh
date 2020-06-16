@@ -34,8 +34,6 @@ const
     TWITTER_SPECIAL_EVENTS_COLLECTION_ID    : twitterSpecialEventsCollectionId,
     TWITTER_SPECIAL_EVENTS_COLLECTION_COUNT :
             twitterSpecialEventsCollectionCount,
-    TWITTER_VIDEOS_COLLECTION_ID            : twitterVideosCollectionId,
-    TWITTER_VIDEOS_COLLECTION_COUNT         : twitterVideosCollectionCount,
     TWITTER_BULLETINS_COLLECTION_ID         : twitterBulletinsCollectionId,
     TWITTER_BULLETINS_COLLECTION_COUNT      : twitterBulletinsCollectionCount,
   } = process.env;
@@ -67,10 +65,12 @@ const
               { schema : yamlFailsafeSchema });
 
         const
-          { title,                       // undefined if continuation tweet
+          { title,                       // required, undefined if con tweet
             sub  : subtitle,             // optional
             color,                       // optional
-            desc : descriptiveRaw = '',  // optional, required if contn tweet
+            youtube,                     // optional
+            tweet,                       // optional
+            desc : descriptiveRaw = '',  // optional, required if con tweet
           } = announcementDocument;
 
         const
@@ -83,7 +83,8 @@ const
             throw new TypeError('Title missing');
 
           const
-            announcement = { title, subtitle, color, descriptive };
+            announcement =
+              { title, subtitle, color, youtube, tweet, descriptive };
 
           return [ announcement, announcement, null ];
         }
@@ -124,12 +125,12 @@ const
               { schema : yamlFailsafeSchema });
 
         const
-          { title,                       // undefined if continuation tweet
+          { title,                       // required, undefined if con tweet
             sub  : subtitle,             // optional
             color,                       // optional
             loc  : location,             // optional
             times                 = [],  // optional
-            desc : descriptiveRaw = '',  // optional, required if contn tweet
+            desc : descriptiveRaw = '',  // optional, required if con tweet
           } = eventDocument;
 
         const
@@ -164,63 +165,6 @@ const
     },
 
   /**
-   * Transforms a video tweet into a video object.
-   * Handles continuation tweets (title not present), which append their
-   * descriptive text to that of the last non-continuation tweet.
-   *
-   * @function videosTransform
-   * @param {string} tweetId - Video tweet status id.
-   * @param {string} tweetText - Video tweet raw text.
-   * @param {(object|null)} lastNonContinuationVideo - Last video object.
-   * @return {object[3]} - Transform result: Video object, last video object, error descriptor.
-   */
-
-  videosTransform =
-    (tweetId, tweetText, lastNonContinuationVideo) => {
-
-      try {
-
-        const
-          videoDocument =
-            yamlSafeLoad(
-              tweetText,
-              { schema : yamlFailsafeSchema });
-
-        const
-          { youtube,                     // undefined if continuation tweet
-            offset,                      // optional
-            title,                       // optional
-            sub  : subtitle,             // optional
-            desc : descriptiveRaw = '',  // optional, required if contn tweet
-          } = videoDocument;
-
-        const
-          descriptive  = descriptiveRaw.trim(),
-          continuation = ! youtube && descriptive;
-
-        if (! continuation) {
-
-          if (! youtube)
-            throw new TypeError('YouTube video ID missing');
-
-          const
-            video = { youtube, offset, title, subtitle, descriptive };
-
-          return [ video, video, null ];
-        }
-
-        else
-          return handleContinuation(
-            lastNonContinuationVideo,
-            descriptive);
-      }
-      catch (error) {
-
-        return prepare(error);
-      }
-    },
-
-  /**
    * Transforms a bulletin tweet into a bulletin object.
    * Note: Unlike annoucements and events, bulletins have no continuations.
    *
@@ -242,10 +186,10 @@ const
               { schema : yamlFailsafeSchema });
 
         const
-          { date,
-            title,
+          { date,            // required
+            title,           // required
             sub : subtitle,  // optional
-            link,
+            link,            // required
             inserts = [],    // optional
           } = bulletinDocument;
 
@@ -372,7 +316,7 @@ const
 exports.agent =
   async message => {
 
-    // Define invokation option
+    // Define invokation options
     let
       dryRun = false;
 
@@ -444,8 +388,6 @@ exports.agent =
             objects  : { tweets   : regularEventsTweets }, },
           { response : { timeline : specialEventsTimeline },
             objects  : { tweets   : specialEventsTweets }, },
-          { response : { timeline : videosTimeline },
-            objects  : { tweets   : videosTweets }, },
           { response : { timeline : bulletinsTimeline },
             objects  : { tweets   : bulletinsTweets }, },
           { data     :
@@ -472,12 +414,6 @@ exports.agent =
                         tweet_mode : 'extended', }),
                     twitter.get(
                       twitterCollectionsEntriesEndpoint,
-                      { id         :
-                          `custom-${twitterVideosCollectionId}`,
-                        count      : +twitterVideosCollectionCount,
-                        tweet_mode : 'extended', }),
-                    twitter.get(
-                      twitterCollectionsEntriesEndpoint,
                       { id         : `custom-${twitterBulletinsCollectionId}`,
                         count      : +twitterBulletinsCollectionCount,
                         tweet_mode : 'extended', }),
@@ -499,7 +435,6 @@ exports.agent =
             [ announcementsTimelineDigest,
               regularEventsTimelineDigest,
               specialEventsTimelineDigest,
-              videosTimelineDigest,
               bulletinsTimelineDigest, ], } = generatedContent;
 
       // Generate datasets for regular/special events and bulletins
@@ -508,17 +443,14 @@ exports.agent =
         announcementsDataset      = [],
         regularEventsDataset      = [],
         specialEventsDataset      = [],
-        videosDataset             = [],
         bulletinsDataset          = [],
         announcementsErrors       = [],
         regularEventsErrors       = [],
         specialEventsErrors       = [],
-        videosErrors              = [],
         bulletinsErrors           = [],
         announcementsTimelineHash = createHash('md5'),
         regularEventsTimelineHash = createHash('md5'),
         specialEventsTimelineHash = createHash('md5'),
-        videosTimelineHash        = createHash('md5'),
         bulletinsTimelineHash     = createHash('md5');
 
       for
@@ -536,9 +468,6 @@ exports.agent =
               [ specialEventsTimeline,     specialEventsTweets,
                 specialEventsDataset,      specialEventsErrors,
                 specialEventsTimelineHash, eventsTransform, ],
-              [ videosTimeline,            videosTweets,
-                videosDataset,             videosErrors,
-                videosTimelineHash,        videosTransform, ],
               [ bulletinsTimeline,         bulletinsTweets,
                 bulletinsDataset,          bulletinsErrors,
                 bulletinsTimelineHash,     bulletinsTransform, ], ] ) {
@@ -595,12 +524,10 @@ exports.agent =
         [ announcementsTimelineComputedDigest,
           regularEventsTimelineComputedDigest,
           specialEventsTimelineComputedDigest,
-          videosTimelineComputedDigest,
           bulletinsTimelineComputedDigest, ] =
                 [ announcementsTimelineHash.digest('hex'),
                   regularEventsTimelineHash.digest('hex'),
                   specialEventsTimelineHash.digest('hex'),
-                  videosTimelineHash.digest('hex'),
                   bulletinsTimelineHash.digest('hex'), ];
 
       // If dry run, just log generated data; otherwise, if changes detected in
@@ -614,15 +541,12 @@ exports.agent =
           regularEventsTimelineDigest !== regularEventsTimelineComputedDigest,
         specialEventsCollectionUpdated =
           specialEventsTimelineDigest !== specialEventsTimelineComputedDigest,
-        videosCollectionUpdated =
-          videosTimelineDigest !== videosTimelineComputedDigest,
         bulletinsCollectionUpdated =
           bulletinsTimelineDigest !== bulletinsTimelineComputedDigest,
         collectionsUpdated =
           announcementsCollectionUpdated ||
                 regularEventsCollectionUpdated ||
                 specialEventsCollectionUpdated ||
-                videosCollectionUpdated ||
                 bulletinsCollectionUpdated;
 
       if (collectionsUpdated || dryRun) {
@@ -632,18 +556,15 @@ exports.agent =
             { announcements : announcementsDataset,
               regularEvents : regularEventsDataset,
               specialEvents : specialEventsDataset,
-              videos        : videosDataset,
               bulletins     : bulletinsDataset,
               digests       :
                 [ announcementsTimelineComputedDigest,
                   regularEventsTimelineComputedDigest,
                   specialEventsTimelineComputedDigest,
-                  videosTimelineComputedDigest,
                   bulletinsTimelineComputedDigest, ],
               announcementsErrors,
               regularEventsErrors,
               specialEventsErrors,
-              videosErrors,
               bulletinsErrors, },
           computedGeneratedContentJson =
             JSON.stringify(computedGeneratedContent),
@@ -663,8 +584,6 @@ exports.agent =
             updatedCollections.push('regular events');
           if (specialEventsCollectionUpdated)
             updatedCollections.push('special events');
-          if (videosCollectionUpdated)
-            updatedCollections.push('videos');
           if (bulletinsCollectionUpdated)
             updatedCollections.push('bulletins');
 
