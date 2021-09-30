@@ -1,3 +1,11 @@
+# Deprecation Notice
+
+This code ran from May 2020 through August 2021.
+
+Kept for posterity.
+
+
+
 # The Cathedral of Saint Peter-in-Chains
 
 This repository contains the source for a Google Cloud Function that supports the website of [The Cathedral of Saint Peter-in-Chains](https://stpeterspeterborough.ca/), an historic church located in Peterborough, Ontario.
